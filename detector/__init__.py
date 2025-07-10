@@ -18,8 +18,7 @@ def build_detector(cfg, use_cuda, segment=False):
     else:
         if 'YOLOV11' in cfg:
             from .YOLOv11.detector import YOLOv11
-            return YOLOv11(cfg.YOLOV11.WEIGHT, cfg.YOLOV11.DATA, cfg.YOLOV11.IMGSZ,
-                           cfg.YOLOV11.SCORE_THRESH, cfg.YOLOV11.NMS_THRESH, cfg.YOLOV11.MAX_DET)
+            return YOLOv11(cfg.YOLOV11.WEIGHT,cfg.YOLOV11.SCORE_THRESH, cfg.YOLOV11.NMS_THRESH, cfg.YOLOV11.MAX_DET)
 
         elif 'YOLOV5' in cfg:
             from .YOLOv5 import YOLOv5

@@ -29,9 +29,12 @@ class VideoTracker(object):
             warnings.warn("Running in cpu mode which maybe very slow!", UserWarning)
 
         if args.display:
-            cv2.namedWindow("test", cv2.WINDOW_NORMAL)
-            cv2.resizeWindow("test", args.display_width, args.display_height)
-
+          try:
+              cv2.namedWindow("test", cv2.WINDOW_NORMAL)
+              cv2.resizeWindow("test", args.display_width, args.display_height)
+          except cv2.error:
+              print("Display not supported in this environment. Skipping GUI.")
+              args.display = False
         if args.cam != -1:
             print("Using webcam " + str(args.cam))
             self.vdo = cv2.VideoCapture(args.cam)
@@ -129,9 +132,9 @@ class VideoTracker(object):
 
             end = time.time()
 
-            if self.args.display:
-                cv2.imshow("test", ori_im)
-                cv2.waitKey(1)
+            # if self.args.display:
+            #     # cv2.imshow("test", ori_im)
+            #     # cv2.waitKey(1)
 
             if self.args.save_path:
                 self.writer.write(ori_im)
