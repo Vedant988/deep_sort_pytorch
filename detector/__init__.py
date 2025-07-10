@@ -18,7 +18,8 @@ def build_detector(cfg, use_cuda, segment=False):
     else:
         if 'YOLOV11' in cfg:
             from .YOLOv11.detector import YOLOv11
-            return YOLOv11(cfg.YOLOV11.WEIGHT,cfg.YOLOV11.SCORE_THRESH, cfg.YOLOV11.NMS_THRESH, cfg.YOLOV11.MAX_DET)
+            device = 'cuda:0' if use_cuda and torch.cuda.is_available() else 'cpu'
+            return YOLOv11(cfg.YOLOV11.WEIGHT,cfg.YOLOV11.SCORE_THRESH, cfg.YOLOV11.NMS_THRESH, cfg.YOLOV11.MAX_DET, device=device)
 
         elif 'YOLOV5' in cfg:
             from .YOLOv5 import YOLOv5

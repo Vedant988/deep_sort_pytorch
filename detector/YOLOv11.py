@@ -5,7 +5,7 @@ import cv2
 
 class YOLOv11:
     def __init__(self, weight, conf_thres=0.25, iou_thres=0.45, max_det=100, device='cuda:0'):
-        self.device = device
+        self.device = device if device else ('cuda:0' if torch.cuda.is_available() else 'cpu')
         self.model = YOLO(weight).to(device)
         self.model.fuse()
         self.conf_thres = conf_thres
