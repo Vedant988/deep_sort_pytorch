@@ -154,6 +154,7 @@ def parse_args():
     parser.add_argument("--fastreid", action="store_true")
     parser.add_argument("--mmdet", action="store_true")
     parser.add_argument("--segment", action="store_true")
+    parser.add_argument("--config_yolov11", type=str, default="./configs/yolov11.yaml")
     # parser.add_argument("--ignore_display", dest="display", action="store_false", default=True)
     parser.add_argument("--display", action="store_true")
     parser.add_argument("--frame_interval", type=int, default=1)
@@ -168,17 +169,29 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
     cfg = get_config()
-    if args.segment:
-        cfg.USE_SEGMENT = True
-    else:
+
+    # Use YOLOv11
+    if not args.mmdet and not args.segment:
+        cfg.merge_from_file(args.config_yolov11)
+        cfg.USE_MMDET = False
         cfg.USE_SEGMENT = False
+
+    # Use Mask R-CNN (Segmentation)
+    if args.segment:
+        cfg.merge_from_file(args.config_detection)  # segmentation config
+        cfg.USE_SEGMENT = True
+        cfg.USE_MMDET = False
+
+    # Use MMDetection
     if args.mmdet:
         cfg.merge_from_file(args.config_mmdetection)
         cfg.USE_MMDET = True
-    else:
-        cfg.merge_from_file(args.config_detection)
-        cfg.USE_MMDET = False
+        cfg.USE_SEGMENT = False
+
+    # Deep SORT config (always merged)
     cfg.merge_from_file(args.config_deepsort)
+
+    # Optional: FastReID (appearance features)
     if args.fastreid:
         cfg.merge_from_file(args.config_fastreid)
         cfg.USE_FASTREID = True
