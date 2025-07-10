@@ -6,13 +6,16 @@ from detector.YOLOv5.utils.general import xyxy2xywh
 from detector.YOLOv5.utils.plots import Annotator, colors
 
 class YOLOv11:
-    def __init__(self, weight='yolov11.pt', conf_thres=0.25, iou_thres=0.45, device='cuda:0'):
+    def __init__(self, weight='yolov11.pt', conf_thres=0.25, iou_thres=0.45, max_det=1000, device='cuda:0'):
         self.model = YOLO(weight)
         self.device = device
         self.model.fuse()
         self.names = self.model.names
+        self.class_names = self.names 
         self.conf_thres = conf_thres
         self.iou_thres = iou_thres
+        self.max_det = max_det
+
 
     def __call__(self, im0, augment=False, save_result=False):
         results = self.model(im0, conf=self.conf_thres, iou=self.iou_thres, device=self.device)[0]
