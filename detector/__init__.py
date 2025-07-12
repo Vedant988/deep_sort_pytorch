@@ -1,3 +1,4 @@
+import torch
 __all__ = ['build_detector']
 
 def build_detector(cfg, use_cuda, segment=False):
