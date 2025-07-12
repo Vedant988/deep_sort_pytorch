@@ -1,14 +1,16 @@
 import os
+import sys
 import cv2
 import time
-import argparse
 import torch
-import warnings
 import json
-import sys
+import argparse
+import warnings
 
+# Extend sys.path for FastReID
 sys.path.append(os.path.join(os.path.dirname(__file__), 'thirdparty/fast-reid'))
 
+# Internal imports
 from detector import build_detector
 from deep_sort import build_tracker
 from utils.draw import draw_boxes
@@ -17,7 +19,7 @@ from utils.log import get_logger
 from utils.io import write_results
 
 
-class VideoTracker(object):
+class VideoTracker:
     def __init__(self, cfg, args, video_path):
         self.cfg = cfg
         self.args = args
@@ -26,125 +28,117 @@ class VideoTracker(object):
 
         use_cuda = args.use_cuda and torch.cuda.is_available()
         if not use_cuda:
-            warnings.warn("Running in cpu mode which maybe very slow!", UserWarning)
+            warnings.warn("Running in CPU mode, which may be very slow!", UserWarning)
 
+        # GUI display setup
         if args.display:
-          try:
-              cv2.namedWindow("test", cv2.WINDOW_NORMAL)
-              cv2.resizeWindow("test", args.display_width, args.display_height)
-          except cv2.error:
-              print("Display not supported in this environment. Skipping GUI.")
-              args.display = False
-        if args.cam != -1:
-            print("Using webcam " + str(args.cam))
-            self.vdo = cv2.VideoCapture(args.cam)
-        else:
-            self.vdo = cv2.VideoCapture()
-        self.detector = build_detector(cfg, use_cuda=use_cuda, segment=self.args.segment)
+            try:
+                cv2.namedWindow("test", cv2.WINDOW_NORMAL)
+                cv2.resizeWindow("test", args.display_width, args.display_height)
+            except cv2.error:
+                print("Display not supported in this environment. Skipping GUI.")
+                args.display = False
+
+        self.vdo = cv2.VideoCapture(args.cam if args.cam != -1 else video_path)
+        self.detector = build_detector(cfg, use_cuda=use_cuda, segment=args.segment)
         self.deepsort = build_tracker(cfg, use_cuda=use_cuda)
         self.class_names = self.detector.class_names
 
     def __enter__(self):
-        if self.args.cam != -1:
-            ret, frame = self.vdo.read()
-            assert ret, "Error: Camera error"
-            self.im_width = frame.shape[0]
-            self.im_height = frame.shape[1]
+        assert self.vdo.isOpened(), f"Failed to open video source: {self.video_path}"
 
-        else:
-            assert os.path.isfile(self.video_path), "Path error"
-            self.vdo.open(self.video_path)
-            self.im_width = int(self.vdo.get(cv2.CAP_PROP_FRAME_WIDTH))
-            self.im_height = int(self.vdo.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            assert self.vdo.isOpened()
+        self.im_width = int(self.vdo.get(cv2.CAP_PROP_FRAME_WIDTH))
+        self.im_height = int(self.vdo.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
         if self.args.save_path:
             os.makedirs(self.args.save_path, exist_ok=True)
-            # TODO save masks
-
-            # path of saved video and results
             self.save_video_path = os.path.join(self.args.save_path, "results.avi")
             self.save_results_path = os.path.join(self.args.save_path, "results.txt")
-
-            # create video writer
             fourcc = cv2.VideoWriter_fourcc(*'MJPG')
             self.writer = cv2.VideoWriter(self.save_video_path, fourcc, 20, (self.im_width, self.im_height))
-
-            # logging
-            self.logger.info("Save results to {}".format(self.args.save_path))
+            self.logger.info(f"Saving results to {self.args.save_path}")
 
         return self
 
-    def __exit__(self, exc_type, exc_value, exc_traceback):
+    def __exit__(self, exc_type, exc_value, traceback):
         if exc_type:
-            print(exc_type, exc_value, exc_traceback)
+            print(f"Exception occurred: {exc_type}, {exc_value}")
 
     def run(self):
         results = []
         idx_frame = 0
-        with open('coco_classes.json', 'r') as f:
+
+        with open('football_classes.json', 'r') as f:
             idx_to_class = json.load(f)
+
         while self.vdo.grab():
             idx_frame += 1
             if idx_frame % self.args.frame_interval:
                 continue
 
-            start = time.time()
+            start_time = time.time()
             _, ori_im = self.vdo.retrieve()
+            if ori_im is None:
+                break
             im = cv2.cvtColor(ori_im, cv2.COLOR_BGR2RGB)
 
-            # do detection
+            # Detection
             if self.args.segment:
                 bbox_xywh, cls_conf, cls_ids, seg_masks = self.detector(im)
             else:
                 bbox_xywh, cls_conf, cls_ids = self.detector(im)
 
-            # select person class
+            # Filter for 'person' class (COCO ID 2)
             mask = cls_ids == 2
-
             bbox_xywh = bbox_xywh[mask]
-            # bbox dilation just in case bbox too small, delete this line if using a better pedestrian detector
-            bbox_xywh[:, 2:] *= 1.2
             cls_conf = cls_conf[mask]
             cls_ids = cls_ids[mask]
 
-            # do tracking
-            if self.args.segment:
-                seg_masks = seg_masks[mask]
-                outputs, mask_outputs = self.deepsort.update(bbox_xywh, cls_conf, cls_ids, im, seg_masks)
+            if bbox_xywh is None or bbox_xywh.ndim != 2 or bbox_xywh.shape[0] == 0:
+                outputs = torch.empty((0, 6))
+                mask_outputs = None
             else:
-                outputs, _ = self.deepsort.update(bbox_xywh, cls_conf, cls_ids, im)
+                bbox_xywh[:, 2:] *= 1.2  # Slightly enlarge boxes
 
-            # draw boxes for visualization
+                if self.args.segment:
+                    seg_masks = seg_masks[mask]
+                    outputs, mask_outputs = self.deepsort.update(bbox_xywh, cls_conf, cls_ids, im, seg_masks)
+                else:
+                    outputs, _ = self.deepsort.update(bbox_xywh, cls_conf, cls_ids, im)
+                    mask_outputs = None
+
+            # Draw and save results
             if len(outputs) > 0:
                 bbox_tlwh = []
                 bbox_xyxy = outputs[:, :4]
                 identities = outputs[:, -1]
-                cls = outputs[:, -2]
-                names = [idx_to_class[str(label)] for label in cls]
+                classes = outputs[:, -2]
+                names = [idx_to_class.get(str(cls), "Unknown") for cls in classes]
 
-                ori_im = draw_boxes(ori_im, bbox_xyxy, names, identities, None if not self.args.segment else mask_outputs)
+                ori_im = draw_boxes(ori_im, bbox_xyxy, names, identities, mask_outputs if self.args.segment else None)
 
-                for bb_xyxy in bbox_xyxy:
-                    bbox_tlwh.append(self.deepsort._xyxy_to_tlwh(bb_xyxy))
+                for bb in bbox_xyxy:
+                    bbox_tlwh.append(self.deepsort._xyxy_to_tlwh(bb))
 
-                results.append((idx_frame - 1, bbox_tlwh, identities, cls))
+                results.append((idx_frame - 1, bbox_tlwh, identities, classes))
 
-            end = time.time()
-
-            # if self.args.display:
-            #     # cv2.imshow("test", ori_im)
-            #     # cv2.waitKey(1)
+            # Show or save output frame
+            if self.args.display:
+                cv2.imshow("test", ori_im)
+                if cv2.waitKey(1) == 27:
+                    break
 
             if self.args.save_path:
                 self.writer.write(ori_im)
 
-            # save results
+            # Save MOT-format results
             write_results(self.save_results_path, results, 'mot')
 
-            # logging
-            self.logger.info("time: {:.03f}s, fps: {:.03f}, detection numbers: {}, tracking numbers: {}" \
-                             .format(end - start, 1 / (end - start), bbox_xywh.shape[0], len(outputs)))
+            end_time = time.time()
+            self.logger.info(
+                f"time: {end_time - start_time:.03f}s, fps: {1 / (end_time - start_time):.03f}, "
+                f"detections: {bbox_xywh.shape[0] if bbox_xywh is not None else 0}, trackings: {len(outputs)}"
+            )
 
 
 def parse_args():
@@ -154,18 +148,17 @@ def parse_args():
     parser.add_argument("--config_detection", type=str, default="./configs/mask_rcnn.yaml")
     parser.add_argument("--config_deepsort", type=str, default="./configs/deep_sort.yaml")
     parser.add_argument("--config_fastreid", type=str, default="./configs/fastreid.yaml")
+    parser.add_argument("--config_yolov11", type=str, default="./configs/yolov11.yaml")
     parser.add_argument("--fastreid", action="store_true")
     parser.add_argument("--mmdet", action="store_true")
     parser.add_argument("--segment", action="store_true")
-    parser.add_argument("--config_yolov11", type=str, default="./configs/yolov11.yaml")
-    # parser.add_argument("--ignore_display", dest="display", action="store_false", default=True)
     parser.add_argument("--display", action="store_true")
     parser.add_argument("--frame_interval", type=int, default=1)
     parser.add_argument("--display_width", type=int, default=800)
     parser.add_argument("--display_height", type=int, default=600)
     parser.add_argument("--save_path", type=str, default="./output/")
     parser.add_argument("--cpu", dest="use_cuda", action="store_false", default=True)
-    parser.add_argument("--camera", action="store", dest="cam", type=int, default="-1")
+    parser.add_argument("--camera", dest="cam", type=int, default=-1)
     return parser.parse_args()
 
 
@@ -173,28 +166,24 @@ if __name__ == "__main__":
     args = parse_args()
     cfg = get_config()
 
-    # Use YOLOv11
+    # Configure detector based on flags
     if not args.mmdet and not args.segment:
         cfg.merge_from_file(args.config_yolov11)
         cfg.USE_MMDET = False
         cfg.USE_SEGMENT = False
-
-    # Use Mask R-CNN (Segmentation)
-    if args.segment:
-        cfg.merge_from_file(args.config_detection)  # segmentation config
+    elif args.segment:
+        cfg.merge_from_file(args.config_detection)
         cfg.USE_SEGMENT = True
         cfg.USE_MMDET = False
-
-    # Use MMDetection
-    if args.mmdet:
+    elif args.mmdet:
         cfg.merge_from_file(args.config_mmdetection)
         cfg.USE_MMDET = True
         cfg.USE_SEGMENT = False
 
-    # Deep SORT config (always merged)
+    # Always merge Deep SORT config
     cfg.merge_from_file(args.config_deepsort)
 
-    # Optional: FastReID (appearance features)
+    # Optional: FastReID
     if args.fastreid:
         cfg.merge_from_file(args.config_fastreid)
         cfg.USE_FASTREID = True
