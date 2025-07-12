@@ -1,5 +1,5 @@
 YOLOV11:
-  WEIGHT: "/content/drive/MyDrive/Stealth Mode/best (1) (1).pt"
+  WEIGHT: "/content/drive/MyDrive/Stealth Mode/best.pt"
   SCORE_THRESH: 0.25
   NMS_THRESH: 0.45
   MAX_DET: 100
