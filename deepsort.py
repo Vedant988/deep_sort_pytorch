@@ -42,7 +42,7 @@ class VideoTracker:
         self.vdo = cv2.VideoCapture(args.cam if args.cam != -1 else video_path)
         self.detector = build_detector(cfg, use_cuda=use_cuda, segment=args.segment)
         self.deepsort = build_tracker(cfg, use_cuda=use_cuda)
-        self.class_names = self.detector.class_names
+        self.class_names = None  # not used here
 
     def __enter__(self):
         assert self.vdo.isOpened(), f"Failed to open video source: {self.video_path}"
@@ -58,6 +58,10 @@ class VideoTracker:
             self.writer = cv2.VideoWriter(self.save_video_path, fourcc, 20, (self.im_width, self.im_height))
             self.logger.info(f"Saving results to {self.args.save_path}")
 
+        # Load class mapping
+        with open(self.args.class_map, 'r') as f:
+            self.idx_to_class = json.load(f)
+
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
@@ -67,9 +71,6 @@ class VideoTracker:
     def run(self):
         results = []
         idx_frame = 0
-
-        with open('football_classes.json', 'r') as f:
-            idx_to_class = json.load(f)
 
         while self.vdo.grab():
             idx_frame += 1
@@ -88,11 +89,7 @@ class VideoTracker:
             else:
                 bbox_xywh, cls_conf, cls_ids = self.detector(im)
 
-            # Filter for 'person' class (COCO ID 2)
-            mask = cls_ids == 2
-            bbox_xywh = bbox_xywh[mask]
-            cls_conf = cls_conf[mask]
-            cls_ids = cls_ids[mask]
+            # No filtering: keep all classes
 
             if bbox_xywh is None or bbox_xywh.ndim != 2 or bbox_xywh.shape[0] == 0:
                 outputs = torch.empty((0, 6))
@@ -101,7 +98,7 @@ class VideoTracker:
                 bbox_xywh[:, 2:] *= 1.2  # Slightly enlarge boxes
 
                 if self.args.segment:
-                    seg_masks = seg_masks[mask]
+                    seg_masks = seg_masks
                     outputs, mask_outputs = self.deepsort.update(bbox_xywh, cls_conf, cls_ids, im, seg_masks)
                 else:
                     outputs, _ = self.deepsort.update(bbox_xywh, cls_conf, cls_ids, im)
@@ -113,7 +110,7 @@ class VideoTracker:
                 bbox_xyxy = outputs[:, :4]
                 identities = outputs[:, -1]
                 classes = outputs[:, -2]
-                names = [idx_to_class.get(str(cls), "Unknown") for cls in classes]
+                names = [self.idx_to_class.get(str(int(c)), "Unknown") for c in classes]
 
                 ori_im = draw_boxes(ori_im, bbox_xyxy, names, identities, mask_outputs if self.args.segment else None)
 
@@ -123,10 +120,10 @@ class VideoTracker:
                 results.append((idx_frame - 1, bbox_tlwh, identities, classes))
 
             # Show or save output frame
-            if self.args.display:
-                cv2.imshow("test", ori_im)
-                if cv2.waitKey(1) == 27:
-                    break
+            # if self.args.display:
+            #     cv2.imshow("test", ori_im)
+            #     if cv2.waitKey(1) == 27:
+            #         break
 
             if self.args.save_path:
                 self.writer.write(ori_im)
@@ -149,6 +146,7 @@ def parse_args():
     parser.add_argument("--config_deepsort", type=str, default="./configs/deep_sort.yaml")
     parser.add_argument("--config_fastreid", type=str, default="./configs/fastreid.yaml")
     parser.add_argument("--config_yolov11", type=str, default="./configs/yolov11.yaml")
+    parser.add_argument("--class_map", type=str, default="football_classes.json", help="Path to class mapping JSON file")
     parser.add_argument("--fastreid", action="store_true")
     parser.add_argument("--mmdet", action="store_true")
     parser.add_argument("--segment", action="store_true")
